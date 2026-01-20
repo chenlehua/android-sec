@@ -24,48 +24,89 @@
 
 ### 1.1 高通平台系统架构总览
 
-高通平台车载系统采用QTEE + 独立安全芯片SE的双安全锚点架构，提供更强的安全冗余能力。
+高通平台车载系统采用分层架构设计，以QTEE + 独立安全芯片SE的双安全锚点架构为核心，从下到上分为五个主要层次。
 
 ```mermaid
 graph TB
-    subgraph "应用层 Application Layer"
-        APP["SafeKeyManager<br/>Framework封装"]
-        APP_DESC["• 证书获取、签名验签<br/>• OkHttpClient TLS配置<br/>• 业务应用安全调用"]
+    subgraph "应用层 (Applications)"
+        A1["车载系统应用<br/>Vehicle Apps"]
+        A2["安全服务应用<br/>SafeKeyManager"]
+        A3["第三方应用<br/>Third-party Apps"]
     end
 
-    subgraph "Native层 SafeKeyService"
-        NATIVE["SafeKeyService<br/>Native服务"]
-        NATIVE_DESC["• 密码学算法封装<br/>• 产线密钥/证书灌装接口<br/>• 安全策略管理"]
+    subgraph "应用框架层 (Application Framework)"
+        F1[Keystore2 Service]
+        F2[SafeKeyService]
+        F3[Certificate Manager]
+        F4[Security Policy Manager]
+        F5[TLS Manager]
+        F6[Audit Logger]
     end
 
-    subgraph "中间件层 Middleware"
-        MW["安全中间件"]
-        SDF["SDF接口<br/>基于GMT 0018"]
-        OSSL["OpenSSL Engine"]
-        PKCS["PKCS11接口"]
-        MW_DESC["• 密码运算调度管理<br/>• 多密码设备兼容"]
+    subgraph "系统运行库层 (Libraries and Runtime)"
+        subgraph "Native Libraries"
+            L1[libcrypto - OpenSSL]
+            L2[libsdf - SDF接口]
+            L3[libpkcs11 - PKCS11]
+            L4[libbinder - Binder IPC]
+        end
+        subgraph "Android Runtime"
+            R1[ART Runtime]
+            R2[JCA/JCE Provider]
+        end
     end
 
-    subgraph "安全硬件层 Security Hardware"
-        QTEE["高通QTEE<br/>Qualcomm TEE"]
-        SE["安全芯片SE<br/>独立安全元件"]
-        TA["Trusted Applications<br/>• Keymaster TA<br/>• Crypto TA<br/>• Storage TA"]
-        APPLET["SE Applets<br/>• 设备密钥存储<br/>• 高安全等级运算"]
+    subgraph "硬件抽象层 (HAL)"
+        H1[KeyMint HAL]
+        H2[Gatekeeper HAL]
+        H3[SE HAL]
+        H4[Crypto HAL]
     end
 
-    APP --> NATIVE
-    NATIVE --> MW
-    SDF --> QTEE
-    OSSL --> QTEE
-    PKCS --> SE
-    QTEE --> TA
-    SE --> APPLET
+    subgraph "安全硬件层 (Security Hardware)"
+        subgraph "高通QTEE (Qualcomm TEE)"
+            T1[Keymaster TA]
+            T2[Crypto TA]
+            T3[Storage TA]
+        end
+        subgraph "安全芯片SE (Secure Element)"
+            S1[密钥存储 Applet]
+            S2[密码运算 Applet]
+            S3[认证 Applet]
+        end
+        subgraph "硬件安全基础"
+            HW1[ARM TrustZone]
+            HW2[RPMB安全存储]
+            HW3[eFuse安全熔丝]
+            HW4[SE防篡改模块]
+        end
+    end
 
-    style APP fill:#e1f5fe
-    style NATIVE fill:#fff3e0
-    style MW fill:#f3e5f5
-    style QTEE fill:#ffcdd2
-    style SE fill:#ff8a80
+    A1 --> F1
+    A2 --> F2
+    A3 --> F1
+    F1 --> L1
+    F2 --> L2
+    F2 --> L3
+    L1 --> H1
+    L2 --> H4
+    L3 --> H3
+    H1 --> T1
+    H3 --> S1
+    H4 --> T2
+    T1 --> HW1
+    T3 --> HW2
+    S1 --> HW4
+
+    style A1 fill:#e1f5fe
+    style A2 fill:#e1f5fe
+    style F1 fill:#fff3e0
+    style F2 fill:#fff3e0
+    style L1 fill:#f3e5f5
+    style H1 fill:#c8e6c9
+    style T1 fill:#ffcdd2
+    style S1 fill:#ff8a80
+    style HW1 fill:#ffcdd2
 ```
 
 ### 1.2 QTEE架构详解

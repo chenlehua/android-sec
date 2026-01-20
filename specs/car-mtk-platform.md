@@ -23,42 +23,78 @@
 
 ### 1.1 MTK平台系统架构总览
 
-MTK平台车载系统采用分层架构设计，以Trustonic TEE作为核心安全锚点，从应用层到安全硬件层形成完整的安全链路。
+MTK平台车载系统采用分层架构设计，以Trustonic TEE作为核心安全锚点，从下到上分为五个主要层次。
 
 ```mermaid
 graph TB
-    subgraph "应用层 Application Layer"
-        APP["SafeKeyManager<br/>Framework封装"]
-        APP_DESC["• 证书获取、签名验签<br/>• OkHttpClient TLS配置<br/>• 业务应用安全调用"]
+    subgraph "应用层 (Applications)"
+        A1["车载系统应用<br/>Vehicle Apps"]
+        A2["安全服务应用<br/>SafeKeyManager"]
+        A3["第三方应用<br/>Third-party Apps"]
     end
 
-    subgraph "Native层 SafeKeyService"
-        NATIVE["SafeKeyService<br/>Native服务"]
-        NATIVE_DESC["• 密码学算法封装<br/>• 产线密钥/证书灌装接口<br/>• 安全策略管理"]
+    subgraph "应用框架层 (Application Framework)"
+        F1[Keystore2 Service]
+        F2[SafeKeyService]
+        F3[Certificate Manager]
+        F4[Security Policy Manager]
+        F5[TLS Manager]
+        F6[Audit Logger]
     end
 
-    subgraph "中间件层 Middleware"
-        MW["安全中间件"]
-        SDF["SDF接口<br/>基于GMT 0018"]
-        OSSL["OpenSSL Engine"]
-        MW_DESC["• 密码运算调度管理<br/>• 密码设备兼容"]
+    subgraph "系统运行库层 (Libraries and Runtime)"
+        subgraph "Native Libraries"
+            L1[libcrypto - OpenSSL]
+            L2[libsdf - SDF接口]
+            L3[libbinder - Binder IPC]
+            L4[libutils - 工具库]
+        end
+        subgraph "Android Runtime"
+            R1[ART Runtime]
+            R2[JCA/JCE Provider]
+        end
     end
 
-    subgraph "安全硬件层 Security Hardware"
-        TEE["Trustonic TEE<br/>Kinibi<br/>安全锚点"]
-        TA["Trusted Applications<br/>• Keymaster TA<br/>• Crypto TA<br/>• Storage TA"]
+    subgraph "硬件抽象层 (HAL)"
+        H1[KeyMint HAL]
+        H2[Gatekeeper HAL]
+        H3[Crypto HAL]
     end
 
-    APP --> NATIVE
-    NATIVE --> MW
-    SDF --> TEE
-    OSSL --> TEE
-    TEE --> TA
+    subgraph "安全硬件层 (Security Hardware)"
+        subgraph "Trustonic TEE (Kinibi)"
+            T1[Keymaster TA]
+            T2[Crypto TA]
+            T3[Storage TA]
+            T4[自定义安全TA]
+        end
+        subgraph "硬件安全基础"
+            HW1[ARM TrustZone]
+            HW2[RPMB安全存储]
+            HW3[eFuse安全熔丝]
+        end
+    end
 
-    style APP fill:#e1f5fe
-    style NATIVE fill:#fff3e0
-    style MW fill:#f3e5f5
-    style TEE fill:#ffcdd2
+    A1 --> F1
+    A2 --> F2
+    A3 --> F1
+    F1 --> L1
+    F2 --> L2
+    L1 --> H1
+    L2 --> H3
+    H1 --> T1
+    H3 --> T2
+    T1 --> HW1
+    T3 --> HW2
+
+    style A1 fill:#e1f5fe
+    style A2 fill:#e1f5fe
+    style F1 fill:#fff3e0
+    style F2 fill:#fff3e0
+    style L1 fill:#f3e5f5
+    style H1 fill:#c8e6c9
+    style T1 fill:#ffcdd2
+    style HW1 fill:#ff8a80
 ```
 
 ### 1.2 Trustonic TEE架构详解
