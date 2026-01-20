@@ -8,15 +8,14 @@
 
 1. [MTK平台架构分析](#一mtk平台架构分析)
 2. [现有安全能力评估](#二现有安全能力评估)
-3. [产线灌装流程设计](#三产线灌装流程设计)
-4. [TEE单点风险识别](#四tee单点风险识别)
-5. [防护类安全增强方案](#五防护类安全增强方案)
-6. [密钥备份与恢复机制](#六密钥备份与恢复机制)
-7. [Keystore功能集成方案](#七keystore功能集成方案)
-8. [安全仲裁架构设计](#八安全仲裁架构设计)
-9. [故障检测与降级策略](#九故障检测与降级策略)
-10. [安全监控与审计增强](#十安全监控与审计增强)
-11. [实施建议](#十一实施建议)
+3. [TEE单点风险识别与解决方案](#三tee单点风险识别与解决方案)
+4. [防护类安全增强方案](#四防护类安全增强方案)
+5. [密钥备份与恢复机制](#五密钥备份与恢复机制)
+6. [Keystore功能集成方案](#六keystore功能集成方案)
+7. [安全仲裁架构设计](#七安全仲裁架构设计)
+8. [故障检测与降级策略](#八故障检测与降级策略)
+9. [安全监控与审计增强](#九安全监控与审计增强)
+10. [实施建议](#十实施建议)
 
 ---
 
@@ -223,181 +222,9 @@ flowchart TB
 
 ---
 
-## 三、产线灌装流程设计
+## 三、TEE单点风险识别与解决方案
 
-### 3.1 产线灌装整体架构
-
-产线通过上位机系统完成密钥和证书的安全灌装，确保设备出厂时具备完整的安全凭证。
-
-```mermaid
-graph TB
-    subgraph "产线灌装环境"
-        subgraph "上位机系统"
-            PC["灌装上位机"]
-            PC_SW["灌装软件"]
-            PC_HSM["本地HSM/加密狗"]
-            PC_LOG["灌装日志系统"]
-        end
-
-        subgraph "安全后台"
-            KMS["密钥管理系统KMS"]
-            CA["企业CA证书中心"]
-            DB["灌装记录数据库"]
-            AUDIT["审计日志系统"]
-        end
-
-        subgraph "待灌装设备（MTK平台）"
-            IVI["车载IVI设备"]
-            TEE_TARGET["Trustonic TEE<br/>安全模块"]
-        end
-    end
-
-    PC --> PC_SW
-    PC_SW --> PC_HSM
-    PC_SW --> PC_LOG
-    
-    PC_SW <-->|安全通道| KMS
-    PC_SW <-->|证书请求| CA
-    PC_SW -->|记录| DB
-    PC_LOG --> AUDIT
-
-    PC_SW <-->|灌装通道| IVI
-    IVI --> TEE_TARGET
-
-    style PC fill:#e3f2fd
-    style KMS fill:#fff3e0
-    style CA fill:#fff3e0
-    style TEE_TARGET fill:#ffcdd2
-```
-
-### 3.2 MTK平台产线灌装详细流程
-
-```mermaid
-sequenceDiagram
-    participant OP as 操作员
-    participant PC as 上位机软件
-    participant HSM as 本地HSM
-    participant KMS as 密钥管理系统
-    participant CA as CA证书中心
-    participant DEV as 车载设备
-    participant TEE as Trustonic TEE
-
-    Note over OP,TEE: 阶段1：灌装准备
-    OP->>PC: 启动灌装程序
-    PC->>PC: 操作员身份认证
-    PC->>KMS: 建立安全通道
-    KMS-->>PC: 通道建立成功
-
-    Note over OP,TEE: 阶段2：设备识别
-    OP->>PC: 扫描设备条码
-    PC->>DEV: 读取设备信息
-    DEV-->>PC: 设备SN/型号/MTK平台
-    PC->>KMS: 查询是否已灌装
-    KMS-->>PC: 灌装状态
-
-    Note over OP,TEE: 阶段3：密钥生成与传输
-    PC->>DEV: 请求生成密钥对
-    DEV->>TEE: TEE内生成密钥对
-    TEE-->>DEV: 返回公钥
-    DEV-->>PC: 设备公钥
-
-    PC->>CA: 提交CSR请求
-    CA->>CA: 签发设备证书
-    CA-->>PC: 设备证书+证书链
-
-    PC->>KMS: 请求对称密钥
-    KMS->>HSM: 生成/派生对称密钥
-    HSM-->>KMS: 加密的对称密钥
-    KMS-->>PC: 传输密钥包
-
-    Note over OP,TEE: 阶段4：密钥灌装到TEE
-    PC->>DEV: 灌装证书
-    DEV->>TEE: 安全存储证书到RPMB
-    TEE-->>DEV: 存储成功
-
-    PC->>DEV: 灌装对称密钥
-    DEV->>TEE: 解密并安全存储到RPMB
-    TEE-->>DEV: 存储成功
-
-    Note over OP,TEE: 阶段5：验证与记录
-    PC->>DEV: 执行灌装验证
-    DEV->>TEE: 测试签名/加密
-    TEE-->>DEV: 验证通过
-    DEV-->>PC: 灌装验证成功
-
-    PC->>KMS: 上报灌装记录
-    KMS->>KMS: 记录设备SN与密钥绑定
-    PC->>PC: 保存本地日志
-    PC-->>OP: 灌装完成提示
-```
-
-### 3.3 灌装数据流向图
-
-```mermaid
-flowchart LR
-    subgraph "密钥材料来源"
-        KMS_SRC["KMS密钥池"]
-        CA_SRC["CA根证书"]
-        HSM_SRC["HSM主密钥"]
-    end
-
-    subgraph "上位机处理"
-        ENCRYPT["密钥加密封装"]
-        CERT_GEN["证书生成"]
-        PACKAGE["灌装包组装"]
-    end
-
-    subgraph "传输通道"
-        SEC_CH["安全传输通道<br/>TLS + 设备认证"]
-    end
-
-    subgraph "MTK设备存储"
-        TEE_STORE["Trustonic TEE<br/>安全存储"]
-        RPMB["RPMB存储"]
-    end
-
-    KMS_SRC --> ENCRYPT
-    CA_SRC --> CERT_GEN
-    HSM_SRC --> ENCRYPT
-    ENCRYPT --> PACKAGE
-    CERT_GEN --> PACKAGE
-    PACKAGE --> SEC_CH
-    SEC_CH --> TEE_STORE
-    TEE_STORE --> RPMB
-```
-
-### 3.4 灌装安全措施
-
-```mermaid
-mindmap
-  root((MTK平台产线灌装<br/>安全措施))
-    操作员认证
-      工卡 + 密码双因素
-      权限分级管理
-      操作审计记录
-    传输安全
-      TLS安全通道
-      设备证书认证
-      密钥传输加密
-    设备验证
-      设备身份验证
-      防重复灌装检查
-      灌装完整性验证
-    密钥保护
-      HSM生成密钥
-      密钥从不明文暴露
-      密钥分片备份
-    审计追溯
-      全流程日志记录
-      设备与密钥绑定
-      异常事件告警
-```
-
----
-
-## 四、TEE单点风险识别
-
-### 4.1 MTK平台特有风险
+### 3.1 MTK平台特有风险
 
 由于MTK平台仅依赖Trustonic TEE作为唯一安全锚点，TEE故障将导致整个安全体系失效。
 
@@ -441,7 +268,190 @@ graph TB
     end
 ```
 
-### 4.2 故障影响链分析
+### 3.2 TEE故障风险解决方案
+
+针对MTK平台（Trustonic TEE单安全锚点架构）的各类TEE故障风险场景，提出以下针对性解决方案：
+
+#### 3.2.1 场景1: TEE软件异常解决方案
+
+| 故障表现 | 解决方案 | 实施细节 |
+|---------|---------|---------|
+| **TA崩溃** | TEE热重启 | 自动重启TEE服务，重新加载TA，期间缓存请求 |
+| **响应超时** | 超时重试+降级 | 设置超时阈值（如3秒），超时后重试2次，仍失败则进入降级模式 |
+| **错误码返回** | 错误分类处理 | 根据错误码分类：临时错误重试、永久错误降级、严重错误告警 |
+
+```mermaid
+flowchart TD
+    TEE_SW_FAULT["TEE软件异常检测"]
+    TEE_SW_FAULT --> CLASSIFY{"错误分类"}
+    
+    CLASSIFY -->|临时错误| RETRY["重试操作<br/>最多3次"]
+    CLASSIFY -->|永久错误| DEGRADE["进入降级模式"]
+    CLASSIFY -->|严重错误| ALERT["立即告警+安全模式"]
+    
+    RETRY -->|成功| NORMAL["恢复正常"]
+    RETRY -->|失败| RESTART["尝试热重启TEE"]
+    
+    RESTART -->|成功| NORMAL
+    RESTART -->|失败| DEGRADE
+    
+    DEGRADE --> SW_BACKUP["软件密码备份<br/>仅限中低安全级别"]
+    DEGRADE --> NOTIFY["通知用户+上报VSOC"]
+    
+    style SW_BACKUP fill:#fff9c4
+    style ALERT fill:#ff8a80
+```
+
+**具体措施**：
+1. **心跳监测增强**：将心跳检测周期从5秒缩短到2秒，快速发现异常
+2. **TA隔离运行**：关键TA独立运行，一个TA崩溃不影响其他TA
+3. **状态持久化**：TEE操作状态定期保存，重启后可快速恢复
+
+#### 3.2.2 场景2: TEE安全存储损坏解决方案
+
+| 故障表现 | 解决方案 | 实施细节 |
+|---------|---------|---------|
+| **密钥读取失败** | 密钥分片恢复 | 从云端和本地分片恢复设备根密钥 |
+| **数据校验错误** | 完整性修复 | 尝试从备份区恢复，失败则触发密钥恢复流程 |
+| **单个密钥损坏** | 密钥重派生 | 使用根密钥重新派生业务密钥 |
+
+```mermaid
+flowchart TD
+    STORAGE_FAULT["安全存储损坏检测"]
+    STORAGE_FAULT --> CHECK_TYPE{"损坏类型"}
+    
+    CHECK_TYPE -->|单个密钥| REDERIVE["使用根密钥重新派生"]
+    CHECK_TYPE -->|根密钥损坏| SHARD_RECOVER["分片恢复流程"]
+    CHECK_TYPE -->|RPMB完全损坏| FACTORY["返厂维修"]
+    
+    REDERIVE --> VERIFY["验证派生结果"]
+    VERIFY -->|成功| NORMAL["恢复正常"]
+    VERIFY -->|失败| SHARD_RECOVER
+    
+    SHARD_RECOVER --> COLLECT["收集密钥分片<br/>本地+云端+4S店"]
+    COLLECT --> REBUILD["TEE内重建根密钥"]
+    REBUILD --> CERT_RESIGN["证书重签发"]
+    CERT_RESIGN --> NORMAL
+    
+    style SHARD_RECOVER fill:#fff9c4
+    style FACTORY fill:#ff8a80
+```
+
+**具体措施**：
+1. **双区备份**：RPMB存储采用双区设计，主区损坏时自动切换备用区
+2. **定期校验**：每小时进行一次密钥完整性校验，提前发现问题
+3. **分片预取**：预先将一个密钥分片安全缓存在本地加密分区
+
+#### 3.2.3 场景3: RPMB存储故障解决方案
+
+| 故障表现 | 解决方案 | 实施细节 |
+|---------|---------|---------|
+| **读写失败** | 多次重试+告警 | 重试读写操作，同时记录错误日志并告警 |
+| **完全不可访问** | 安全模式+维修 | 进入安全模式，禁用网联功能，引导用户维修 |
+| **部分扇区损坏** | 坏块管理+迁移 | 标记坏块，将数据迁移到备用扇区 |
+
+```mermaid
+flowchart TD
+    RPMB_FAULT["RPMB故障检测"]
+    RPMB_FAULT --> SEVERITY{"故障严重程度"}
+    
+    SEVERITY -->|轻微| BAD_BLOCK["坏块标记与迁移"]
+    SEVERITY -->|中等| RETRY_WARN["重试+持续告警"]
+    SEVERITY -->|严重| SAFE_MODE["进入安全模式"]
+    
+    BAD_BLOCK --> CONTINUE["继续运行<br/>监控告警"]
+    
+    RETRY_WARN -->|恢复| CONTINUE
+    RETRY_WARN -->|持续失败| SAFE_MODE
+    
+    SAFE_MODE --> DISABLE["禁用网联功能"]
+    SAFE_MODE --> LOCAL_ONLY["仅保留基本车辆功能"]
+    SAFE_MODE --> USER_NOTIFY["强制显示维修提示"]
+    
+    USER_NOTIFY --> FACTORY["引导用户前往4S店"]
+    
+    style SAFE_MODE fill:#ff8a80
+    style FACTORY fill:#ffcdd2
+```
+
+**具体措施**：
+1. **RPMB健康监测**：启动时和定期检测RPMB健康状态
+2. **写入验证**：每次写入后立即读取验证，确保写入成功
+3. **备用存储预案**：准备临时的软件加密存储作为紧急备用
+
+#### 3.2.4 场景4: 密钥泄露风险解决方案
+
+| 风险类型 | 解决方案 | 实施细节 |
+|---------|---------|---------|
+| **侧信道攻击风险** | TEE安全加固 | 启用Trustonic的侧信道防护，恒定时间实现 |
+| **非法导出尝试** | 访问审计+阻断 | 记录所有密钥访问，检测异常模式立即阻断 |
+| **密钥已泄露** | 证书吊销+轮换 | 远程吊销证书，触发密钥轮换流程 |
+
+```mermaid
+flowchart TD
+    LEAK_RISK["密钥泄露风险检测"]
+    LEAK_RISK --> TYPE{"检测类型"}
+    
+    TYPE -->|预防性检测| MONITOR["异常访问监控"]
+    TYPE -->|确认泄露| REVOKE["立即吊销证书"]
+    
+    MONITOR --> PATTERN["行为模式分析"]
+    PATTERN -->|正常| CONTINUE["继续监控"]
+    PATTERN -->|异常| LOCKDOWN["临时锁定密钥"]
+    
+    LOCKDOWN --> INVESTIGATE["安全调查"]
+    INVESTIGATE -->|误报| UNLOCK["解锁密钥"]
+    INVESTIGATE -->|确认泄露| REVOKE
+    
+    REVOKE --> KEY_ROTATE["密钥轮换"]
+    KEY_ROTATE --> CERT_REISSUE["证书重签发"]
+    CERT_REISSUE --> VSOC_REPORT["上报安全事件"]
+    
+    style REVOKE fill:#ff8a80
+    style KEY_ROTATE fill:#fff9c4
+```
+
+**具体措施**：
+1. **访问频率限制**：限制密钥访问频率，防止暴力攻击
+2. **异常行为检测**：检测非常规时间、非常规调用者的访问
+3. **远程吊销能力**：车厂可远程吊销设备证书，使泄露密钥失效
+
+#### 3.2.5 场景5: 版本回退攻击解决方案
+
+| 攻击类型 | 解决方案 | 实施细节 |
+|---------|---------|---------|
+| **TEE OS回退** | Anti-Rollback计数器 | 使用eFuse存储版本号，禁止回退到低版本 |
+| **TA回退** | TA版本绑定 | TA版本与设备状态绑定，回退时密钥不可用 |
+| **固件回退** | Verified Boot | 启动时验证固件签名和版本号 |
+
+```mermaid
+flowchart TD
+    ROLLBACK["版本回退检测"]
+    ROLLBACK --> CHECK{"版本比对"}
+    
+    CHECK -->|版本正常| BOOT["正常启动"]
+    CHECK -->|版本回退| BLOCK["阻止启动"]
+    
+    BLOCK --> LOG["记录回退尝试"]
+    LOG --> ALERT["安全告警"]
+    ALERT --> FORCE_UPDATE["强制更新到最新版本"]
+    
+    subgraph "Anti-Rollback机制"
+        AR1["eFuse版本计数器"]
+        AR2["每次升级递增"]
+        AR3["只增不减"]
+    end
+    
+    style BLOCK fill:#ff8a80
+    style ALERT fill:#ffcdd2
+```
+
+**具体措施**：
+1. **eFuse版本锁定**：关键安全组件版本记录在eFuse，不可逆
+2. **双重版本验证**：Bootloader和TEE均进行版本验证
+3. **升级审计**：记录每次升级事件，便于追溯
+
+### 3.3 故障影响链分析
 
 ```mermaid
 flowchart TD
@@ -477,7 +487,7 @@ flowchart TD
     style FINAL fill:#ff8a80
 ```
 
-### 4.3 MTK平台风险缓解重点
+### 3.4 MTK平台风险缓解重点
 
 由于缺少独立安全芯片SE作为备份，MTK平台需要更加重视：
 
@@ -488,9 +498,9 @@ flowchart TD
 
 ---
 
-## 五、防护类安全增强方案
+## 四、防护类安全增强方案
 
-### 5.1 MTK平台防护架构
+### 4.1 MTK平台防护架构
 
 ```mermaid
 graph TB
@@ -542,7 +552,7 @@ graph TB
     style MW3 fill:#c8e6c9
 ```
 
-### 5.2 分层防护策略
+### 4.2 分层防护策略
 
 ```mermaid
 graph TB
@@ -595,9 +605,9 @@ graph TB
 
 ---
 
-## 六、密钥备份与恢复机制
+## 五、密钥备份与恢复机制
 
-### 6.1 密钥分类与备份策略
+### 5.1 密钥分类与备份策略
 
 ```mermaid
 graph TB
@@ -634,7 +644,7 @@ graph TB
     end
 ```
 
-### 6.2 密钥派生架构
+### 5.2 密钥派生架构
 
 通过基于根密钥的派生架构，大幅减少需要备份的密钥数量。
 
@@ -668,7 +678,7 @@ flowchart TD
     style VMK fill:#ffcc80
 ```
 
-### 6.3 设备根密钥分片备份方案
+### 5.3 设备根密钥分片备份方案
 
 采用Shamir秘密分享方案，实现安全的密钥备份与恢复。
 
@@ -699,7 +709,7 @@ flowchart TD
     style SHAMIR fill:#fff9c4
 ```
 
-### 6.4 TLS证书恢复流程
+### 5.4 TLS证书恢复流程
 
 ```mermaid
 flowchart TD
@@ -751,30 +761,47 @@ flowchart TD
 
 ---
 
-## 七、Keystore功能集成方案
+## 六、Keystore功能集成方案
 
-### 7.1 MTK平台Keystore集成架构
+### 6.1 方案选择：直接使用Android Keystore
 
-在应用层集成Android Keystore功能，利用Trustonic TEE提供的硬件安全保护。
+经过对比分析，**MTK平台建议直接使用Android Keystore API，无需额外集成SafeKey封装层**。理由如下：
+
+#### 6.1.1 Keystore与SafeKey方案对比
+
+| 对比维度 | 直接使用Android Keystore | 集成SafeKey封装 |
+|---------|------------------------|----------------|
+| **接口标准化** | ✅ 标准JCA/JCE接口，跨平台兼容 | ⚠️ 自定义接口，需要额外学习成本 |
+| **硬件支持** | ✅ 直接调用Trustonic TEE的Keymaster TA | ⚠️ 通过SDF接口间接调用 |
+| **密钥证明** | ✅ 原生支持Key Attestation | ❌ 需要额外开发 |
+| **用户认证绑定** | ✅ 支持生物识别/PIN绑定 | ⚠️ 需要额外集成 |
+| **系统维护成本** | ✅ Android系统自动更新 | ❌ 需要自行维护 |
+| **开发复杂度** | ✅ 低，直接使用标准API | ⚠️ 高，需要维护中间层 |
+| **安全审计** | ✅ 经过Google安全审计 | ⚠️ 需要自行审计 |
+| **性能开销** | ✅ 直接调用，无额外开销 | ⚠️ 多一层封装，略有开销 |
+| **故障恢复** | ✅ 系统级恢复机制 | ⚠️ 需要额外实现 |
+
+#### 6.1.2 不集成SafeKey的理由
+
+1. **功能重叠**：Android Keystore已提供完整的密钥管理能力，SafeKey的核心功能（密钥存储、密码运算）与Keystore高度重叠
+2. **架构简化**：MTK平台仅有单一TEE安全锚点，减少中间层可降低系统复杂度和潜在故障点
+3. **标准化优势**：使用标准API便于第三方应用集成和安全审计
+4. **硬件直连**：Keystore直接调用Trustonic TEE的Keymaster TA，性能更优
+5. **安全更新**：依赖Android系统安全更新，无需自行维护安全补丁
+6. **单点风险**：MTK平台没有SE备份，增加中间层会增加额外的故障点
+
+#### 6.1.3 推荐架构
 
 ```mermaid
 graph TB
-    subgraph "应用层 Keystore集成"
-        APP1["业务App 1"]
-        APP2["业务App 2"]
-        APP3["业务App N"]
-        
-        KS_API["Android Keystore API<br/>标准JCA/JCE接口"]
-        
-        subgraph "SafeKeyManager增强"
-            SKM["SafeKeyManager"]
-            SKM_KS["Keystore功能封装"]
-            SKM_CERT["证书管理接口"]
-            SKM_CRYPTO["密码操作接口"]
-        end
+    subgraph "应用层"
+        APP1["业务App"]
+        APP2["车载服务"]
+        APP3["第三方应用"]
     end
 
-    subgraph "Framework层"
+    subgraph "Android Framework"
+        KS_API["Android Keystore API<br/>标准JCA/JCE接口"]
         KSP["KeyStore Provider"]
         KS2["Keystore2 Service"]
     end
@@ -784,27 +811,75 @@ graph TB
     end
 
     subgraph "安全硬件层"
-        TEE["Trustonic TEE<br/>Keymaster TA"]
+        TEE["Trustonic TEE<br/>Kinibi<br/>Keymaster TA"]
     end
 
     APP1 --> KS_API
     APP2 --> KS_API
     APP3 --> KS_API
-    KS_API --> SKM
-    SKM --> SKM_KS
-    SKM --> SKM_CERT
-    SKM --> SKM_CRYPTO
-    SKM_KS --> KSP
+    KS_API --> KSP
     KSP --> KS2
     KS2 --> KM_HAL
     KM_HAL --> TEE
 
-    style SKM fill:#c8e6c9
-    style SKM_KS fill:#c8e6c9
+    style KS_API fill:#c8e6c9
     style TEE fill:#ffcdd2
 ```
 
-### 7.2 Keystore功能能力矩阵
+#### 6.2.1 密钥生成示例
+
+```java
+// 使用Android Keystore生成硬件保护的密钥
+KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(
+    KeyProperties.KEY_ALGORITHM_EC,
+    "AndroidKeyStore"
+);
+
+KeyGenParameterSpec spec = new KeyGenParameterSpec.Builder(
+    "vehicle_auth_key",
+    KeyProperties.PURPOSE_SIGN | KeyProperties.PURPOSE_VERIFY
+)
+    .setDigests(KeyProperties.DIGEST_SHA256)
+    .setUserAuthenticationRequired(true)
+    .setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
+    .setAttestationChallenge(serverChallenge)  // 启用密钥证明
+    .build();
+
+keyPairGenerator.initialize(spec);
+KeyPair keyPair = keyPairGenerator.generateKeyPair();
+
+// 获取证明证书链，发送给服务器验证
+Certificate[] certChain = keyStore.getCertificateChain("vehicle_auth_key");
+```
+
+#### 6.2.2 MTK平台特别注意事项
+
+由于MTK平台没有独立的SE安全芯片，使用Keystore时需注意：
+
+1. **无StrongBox支持**：不要调用`setIsStrongBoxBacked(true)`，会抛出异常
+2. **TEE依赖**：所有硬件保护的密钥都依赖Trustonic TEE，需确保TEE健康
+3. **故障降级**：为关键操作准备软件降级方案
+
+```mermaid
+flowchart TD
+    START["需要存储密钥"] --> Q1{"安全要求?"}
+    
+    Q1 -->|高/最高| TEE["使用Trustonic TEE<br/>Keystore硬件保护"]
+    
+    Q1 -->|中| Q2{"需要硬件保护?"}
+    Q2 -->|是| TEE
+    Q2 -->|否| SW["软件Keystore<br/>不推荐用于敏感数据"]
+    
+    Q1 -->|低| SW
+    
+    TEE --> NOTE["注意：MTK无StrongBox<br/>不设置setIsStrongBoxBacked"]
+    
+    style TEE fill:#ffcdd2
+    style SW fill:#fff9c4
+    style NOTE fill:#e3f2fd
+```
+
+### 6.3 Keystore功能能力矩阵
 
 | 功能类别 | 功能项 | 说明 | 业务场景 |
 |---------|-------|------|---------|
@@ -819,7 +894,7 @@ graph TB
 | | 密钥协商 | ECDH | 安全通信 |
 | **密钥证明** | 硬件证明 | Key Attestation | 远程验证密钥安全性 |
 
-### 7.3 业务使用场景
+### 6.4 业务使用场景
 
 ```mermaid
 mindmap
@@ -850,57 +925,11 @@ mindmap
       设备绑定
 ```
 
-### 7.4 Keystore与SafeKeyManager集成架构
-
-```mermaid
-graph TB
-    subgraph "MTK平台集成架构设计"
-        subgraph "SafeKeyManager增强接口"
-            API_KS["Keystore密钥管理"]
-            API_GEN["密钥生成接口<br/>generateKeyPair/generateSecretKey"]
-            API_USE["密钥使用接口<br/>sign/verify/encrypt/decrypt"]
-            API_ATTEST["密钥证明接口<br/>getKeyAttestation"]
-            API_IMPORT["密钥导入接口<br/>importKey"]
-        end
-
-        subgraph "密钥类型支持"
-            KEY_TEE["TEE密钥<br/>产线灌装"]
-            KEY_KS["Keystore密钥<br/>运行时生成"]
-        end
-
-        subgraph "路由决策"
-            ROUTER["密钥路由器"]
-            ROUTER_DESC["根据密钥类型和操作<br/>选择Trustonic TEE执行"]
-        end
-
-        subgraph "安全模块"
-            TEE["Trustonic TEE<br/>Kinibi"]
-        end
-    end
-
-    API_KS --> API_GEN
-    API_KS --> API_USE
-    API_KS --> API_ATTEST
-    API_KS --> API_IMPORT
-
-    API_GEN --> ROUTER
-    API_USE --> ROUTER
-    API_ATTEST --> ROUTER
-    API_IMPORT --> ROUTER
-
-    ROUTER --> KEY_TEE --> TEE
-    ROUTER --> KEY_KS --> TEE
-
-    style API_KS fill:#c8e6c9
-    style ROUTER fill:#fff9c4
-    style TEE fill:#ffcdd2
-```
-
 ---
 
-## 八、安全仲裁架构设计
+## 七、安全仲裁架构设计
 
-### 8.1 操作安全级别分类
+### 7.1 操作安全级别分类
 
 ```mermaid
 graph TB
@@ -944,7 +973,7 @@ graph TB
     style L1 fill:#c8e6c9
 ```
 
-### 8.2 MTK平台安全仲裁决策流程
+### 7.2 MTK平台安全仲裁决策流程
 
 由于MTK平台没有SE备份，TEE故障时只能降级到软件实现或拒绝操作。
 
@@ -978,7 +1007,7 @@ flowchart TD
     style DEGRADE2 fill:#c8e6c9
 ```
 
-### 8.3 软件密码备份模块
+### 7.3 软件密码备份模块
 
 当TEE不可用时，为中低安全级别操作提供软件备选方案。
 
@@ -1020,9 +1049,9 @@ graph TB
 
 ---
 
-## 九、故障检测与降级策略
+## 八、故障检测与降级策略
 
-### 9.1 TEE健康监测机制
+### 8.1 TEE健康监测机制
 
 ```mermaid
 graph TB
@@ -1058,7 +1087,7 @@ graph TB
     style RECOVERING fill:#e3f2fd
 ```
 
-### 9.2 MTK平台分级降级策略
+### 8.2 MTK平台分级降级策略
 
 由于MTK平台没有SE作为备份，降级策略更加保守。
 
@@ -1102,9 +1131,9 @@ stateDiagram-v2
 
 ---
 
-## 十、安全监控与审计增强
+## 九、安全监控与审计增强
 
-### 10.1 安全日志架构
+### 9.1 安全日志架构
 
 ```mermaid
 graph TB
@@ -1134,7 +1163,7 @@ graph TB
     AGG_SEC --> CLOUD
 ```
 
-### 10.2 关键安全监控指标
+### 9.2 关键安全监控指标
 
 ```mermaid
 graph TB
@@ -1174,9 +1203,9 @@ graph TB
 
 ---
 
-## 十一、实施建议
+## 十、实施建议
 
-### 11.1 MTK平台实施优先级排序
+### 10.1 MTK平台实施优先级排序
 
 ```mermaid
 gantt
@@ -1201,7 +1230,7 @@ gantt
     安全合规审计工具           :p3_3, after p3_1, 30d
 ```
 
-### 11.2 MTK平台特别注意事项
+### 10.2 MTK平台特别注意事项
 
 ```mermaid
 mindmap
@@ -1226,7 +1255,7 @@ mindmap
       持续关注TEE安全漏洞
 ```
 
-### 11.3 与现有系统集成方案
+### 10.3 与现有系统集成方案
 
 ```mermaid
 graph TB

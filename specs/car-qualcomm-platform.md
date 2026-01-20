@@ -9,15 +9,14 @@
 1. [高通平台架构分析](#一高通平台架构分析)
 2. [现有安全能力评估](#二现有安全能力评估)
 3. [双安全模块协作机制](#三双安全模块协作机制)
-4. [产线灌装流程设计](#四产线灌装流程设计)
-5. [故障风险识别](#五故障风险识别)
-6. [防护类安全增强方案](#六防护类安全增强方案)
-7. [密钥备份与恢复机制](#七密钥备份与恢复机制)
-8. [Keystore功能集成方案](#八keystore功能集成方案)
-9. [安全仲裁架构设计](#九安全仲裁架构设计)
-10. [故障检测与降级策略](#十故障检测与降级策略)
-11. [安全监控与审计增强](#十一安全监控与审计增强)
-12. [实施建议](#十二实施建议)
+4. [故障风险识别与解决方案](#四故障风险识别与解决方案)
+5. [防护类安全增强方案](#五防护类安全增强方案)
+6. [密钥备份与恢复机制](#六密钥备份与恢复机制)
+7. [Keystore功能集成方案](#七keystore功能集成方案)
+8. [安全仲裁架构设计](#八安全仲裁架构设计)
+9. [故障检测与降级策略](#九故障检测与降级策略)
+10. [安全监控与审计增强](#十安全监控与审计增强)
+11. [实施建议](#十一实施建议)
 
 ---
 
@@ -327,119 +326,9 @@ flowchart TB
 
 ---
 
-## 四、产线灌装流程设计
+## 四、故障风险识别与解决方案
 
-### 4.1 产线灌装整体架构
-
-```mermaid
-graph TB
-    subgraph "产线灌装环境"
-        subgraph "上位机系统"
-            PC["灌装上位机"]
-            PC_SW["灌装软件"]
-            PC_HSM["本地HSM/加密狗"]
-            PC_LOG["灌装日志系统"]
-        end
-
-        subgraph "安全后台"
-            KMS["密钥管理系统KMS"]
-            CA["企业CA证书中心"]
-            DB["灌装记录数据库"]
-            AUDIT["审计日志系统"]
-        end
-
-        subgraph "待灌装设备（高通平台）"
-            IVI["车载IVI设备"]
-            QTEE_TARGET["高通QTEE<br/>安全模块"]
-            SE_TARGET["安全芯片SE"]
-        end
-    end
-
-    PC --> PC_SW
-    PC_SW --> PC_HSM
-    PC_SW --> PC_LOG
-    
-    PC_SW <-->|安全通道| KMS
-    PC_SW <-->|证书请求| CA
-    PC_SW -->|记录| DB
-    PC_LOG --> AUDIT
-
-    PC_SW <-->|灌装通道| IVI
-    IVI --> QTEE_TARGET
-    IVI --> SE_TARGET
-
-    style PC fill:#e3f2fd
-    style KMS fill:#fff3e0
-    style CA fill:#fff3e0
-    style QTEE_TARGET fill:#ffcdd2
-    style SE_TARGET fill:#ff8a80
-```
-
-### 4.2 高通平台产线灌装流程
-
-```mermaid
-flowchart TB
-    subgraph "高通平台灌装流程"
-        START["开始灌装"] --> CHECK["识别高通平台<br/>QTEE + SE"]
-        
-        CHECK --> PARALLEL
-        
-        subgraph "并行灌装流程"
-            PARALLEL["并行执行"]
-            
-            subgraph "SE灌装"
-                SE_KEY["根密钥生成<br/>SE内生成"]
-                SE_STORE["根密钥存储到SE"]
-            end
-
-            subgraph "QTEE灌装"
-                QTEE_KEY["业务密钥生成<br/>QTEE内生成"]
-                QTEE_STORE["业务密钥存储到QTEE"]
-            end
-        end
-
-        PARALLEL --> SE_KEY --> SE_STORE
-        PARALLEL --> QTEE_KEY --> QTEE_STORE
-
-        SE_STORE --> VERIFY["验证灌装"]
-        QTEE_STORE --> VERIFY
-
-        VERIFY --> BACKUP["根密钥备份到QTEE<br/>（加密备份）"]
-        BACKUP --> COMPLETE["灌装完成"]
-    end
-
-    style SE_STORE fill:#ff8a80
-    style QTEE_STORE fill:#ffcdd2
-```
-
-### 4.3 灌装安全措施
-
-```mermaid
-mindmap
-  root((高通平台产线灌装<br/>安全措施))
-    操作员认证
-      工卡 + 密码双因素
-      权限分级管理
-      操作审计记录
-    双模块灌装
-      SE存储根密钥
-      QTEE存储业务密钥
-      双模块验证
-    密钥备份
-      SE→QTEE加密备份
-      云端分片备份
-      多重恢复路径
-    审计追溯
-      全流程日志记录
-      双模块绑定记录
-      异常事件告警
-```
-
----
-
-## 五、故障风险识别
-
-### 5.1 高通平台风险场景
+### 4.1 高通平台风险场景
 
 由于高通平台具有QTEE和SE双安全锚点，单一模块故障不会导致系统完全失效。
 
@@ -467,7 +356,89 @@ graph TB
     end
 ```
 
-### 5.2 故障影响与冗余分析
+### 4.2 故障风险解决方案
+
+针对高通平台（QTEE + SE双安全锚点架构）的各类故障风险场景，提出以下针对性解决方案：
+
+#### 4.2.1 QTEE故障解决方案
+
+| 故障类型 | 解决方案 | 实施细节 |
+|---------|---------|---------|
+| **TA崩溃/超时** | SE接管执行 | 中间件自动检测QTEE响应超时，切换路由到SE执行关键密码操作 |
+| **QTEE服务异常** | 热重启+SE降级 | 尝试重启QTEE服务，期间由SE承担密码运算任务 |
+| **密钥读取失败** | 使用SE备份密钥 | 根密钥优先存储在SE，QTEE故障时直接使用SE中的密钥 |
+| **RPMB损坏** | SE密钥恢复 | 从SE安全存储中恢复业务密钥，或触发云端分片恢复流程 |
+
+```mermaid
+flowchart TD
+    QTEE_FAULT["QTEE故障检测"]
+    QTEE_FAULT --> RETRY["尝试重启QTEE<br/>最多3次"]
+    RETRY -->|成功| NORMAL["恢复正常模式"]
+    RETRY -->|失败| SE_TAKEOVER["SE接管模式"]
+    SE_TAKEOVER --> SE_CRYPTO["SE执行密码运算"]
+    SE_TAKEOVER --> SE_KEY["使用SE中的密钥"]
+    SE_TAKEOVER --> NOTIFY["上报VSOC并通知用户"]
+    
+    style SE_TAKEOVER fill:#c8e6c9
+    style NOTIFY fill:#fff9c4
+```
+
+#### 4.2.2 SE故障解决方案
+
+| 故障类型 | 解决方案 | 实施细节 |
+|---------|---------|---------|
+| **通信失败** | QTEE继续运行 | QTEE独立运行，使用QTEE中的备份密钥继续提供服务 |
+| **响应错误** | 重试+降级 | 重试SE操作，失败后降级使用QTEE备份的加密密钥 |
+| **SE完全失效** | QTEE接管+维修通知 | QTEE接管所有操作，同时通知用户进行SE维修 |
+| **根密钥不可访问** | 云端分片恢复 | 从云端收集密钥分片，在QTEE中重建根密钥 |
+
+```mermaid
+flowchart TD
+    SE_FAULT["SE故障检测"]
+    SE_FAULT --> CHECK_QTEE{"QTEE状态?"}
+    CHECK_QTEE -->|正常| QTEE_BACKUP["使用QTEE备份密钥"]
+    CHECK_QTEE -->|异常| CLOUD_RECOVER["云端分片恢复"]
+    
+    QTEE_BACKUP --> CONTINUE["继续提供服务<br/>（根密钥操作受限）"]
+    CLOUD_RECOVER --> REBUILD["QTEE内重建密钥"]
+    
+    CONTINUE --> ALERT["告警通知<br/>建议维修SE"]
+    REBUILD --> ALERT
+    
+    style QTEE_BACKUP fill:#c8e6c9
+    style CLOUD_RECOVER fill:#fff9c4
+    style ALERT fill:#ffcdd2
+```
+
+#### 4.2.3 双模块同时故障解决方案
+
+| 场景 | 解决方案 | 实施细节 |
+|-----|---------|---------|
+| **极端双故障** | 安全模式+等待维修 | 进入安全模式，禁用网联功能，保留基本车辆控制 |
+| **临时性双故障** | 软件备份+严格限制 | 仅允许低安全级别的软件加密操作，拒绝关键操作 |
+| **持续性双故障** | 强制返厂维修 | 显示警告信息，引导用户前往4S店进行维修 |
+
+```mermaid
+stateDiagram-v2
+    [*] --> DualFault: 双模块同时故障
+    
+    DualFault --> SafeMode: 进入安全模式
+    SafeMode: 安全模式
+    SafeMode: • 禁用远程控制
+    SafeMode: • 禁用OTA更新
+    SafeMode: • 保留基本驾驶功能
+    SafeMode: • 显示维修提示
+    
+    SafeMode --> PartialRecover: 部分模块恢复
+    PartialRecover --> DegradedMode: 降级运行
+    DegradedMode --> [*]: 完全恢复
+    
+    SafeMode --> ServiceCenter: 用户送修
+    ServiceCenter --> FullRepair: 双模块维修/更换
+    FullRepair --> [*]: 系统恢复
+```
+
+### 4.3 故障影响与冗余分析
 
 ```mermaid
 flowchart TD
@@ -495,9 +466,9 @@ flowchart TD
 
 ---
 
-## 六、防护类安全增强方案
+## 五、防护类安全增强方案
 
-### 6.1 高通平台防护架构
+### 5.1 高通平台防护架构
 
 ```mermaid
 graph TB
@@ -550,7 +521,7 @@ graph TB
     style SE fill:#ff8a80
 ```
 
-### 6.2 分层防护策略
+### 5.2 分层防护策略
 
 ```mermaid
 graph TB
@@ -588,9 +559,9 @@ graph TB
 
 ---
 
-## 七、密钥备份与恢复机制
+## 六、密钥备份与恢复机制
 
-### 7.1 高通平台密钥备份策略
+### 6.1 高通平台密钥备份策略
 
 ```mermaid
 flowchart TD
@@ -614,7 +585,7 @@ flowchart TD
     style QTEE_BACKUP fill:#ffcdd2
 ```
 
-### 7.2 双模块密钥恢复流程
+### 6.2 双模块密钥恢复流程
 
 ```mermaid
 flowchart TD
@@ -642,26 +613,44 @@ flowchart TD
 
 ---
 
-## 八、Keystore功能集成方案
+## 七、Keystore功能集成方案
 
-### 8.1 高通平台Keystore集成架构
+### 7.1 方案选择：直接使用Android Keystore
+
+经过对比分析，**高通平台建议直接使用Android Keystore API，无需额外集成SafeKey封装层**。理由如下：
+
+#### 7.1.1 Keystore与SafeKey方案对比
+
+| 对比维度 | 直接使用Android Keystore | 集成SafeKey封装 |
+|---------|------------------------|----------------|
+| **接口标准化** | ✅ 标准JCA/JCE接口，跨平台兼容 | ⚠️ 自定义接口，需要额外学习成本 |
+| **硬件支持** | ✅ 直接调用QTEE/SE的Keymaster TA | ⚠️ 通过SDF/PKCS11间接调用 |
+| **密钥证明** | ✅ 原生支持Key Attestation | ❌ 需要额外开发 |
+| **用户认证绑定** | ✅ 支持生物识别/PIN绑定 | ⚠️ 需要额外集成 |
+| **系统维护成本** | ✅ Android系统自动更新 | ❌ 需要自行维护 |
+| **开发复杂度** | ✅ 低，直接使用标准API | ⚠️ 高，需要维护中间层 |
+| **安全审计** | ✅ 经过Google安全审计 | ⚠️ 需要自行审计 |
+| **性能开销** | ✅ 直接调用，无额外开销 | ⚠️ 多一层封装，略有开销 |
+
+#### 7.1.2 不集成SafeKey的理由
+
+1. **功能重叠**：Android Keystore已提供完整的密钥管理能力，SafeKey的核心功能（密钥存储、密码运算）与Keystore高度重叠
+2. **架构简化**：减少中间层可降低系统复杂度和潜在故障点
+3. **标准化优势**：使用标准API便于第三方应用集成和安全审计
+4. **硬件直连**：Keystore直接调用QTEE/SE的Keymaster TA，性能更优
+5. **安全更新**：依赖Android系统安全更新，无需自行维护安全补丁
+
+#### 7.1.3 推荐架构
 
 ```mermaid
 graph TB
-    subgraph "应用层 Keystore集成"
-        APP1["业务App 1"]
-        APP2["业务App 2"]
-        
-        KS_API["Android Keystore API"]
-        
-        subgraph "SafeKeyManager增强"
-            SKM["SafeKeyManager"]
-            SKM_KS["Keystore功能封装"]
-            SKM_ROUTER["安全模块路由"]
-        end
+    subgraph "应用层"
+        APP1["业务App"]
+        APP2["车载服务"]
     end
 
-    subgraph "Framework层"
+    subgraph "Android Framework"
+        KS_API["Android Keystore API<br/>标准JCA/JCE接口"]
         KSP["KeyStore Provider"]
         KS2["Keystore2 Service"]
     end
@@ -677,21 +666,69 @@ graph TB
 
     APP1 --> KS_API
     APP2 --> KS_API
-    KS_API --> SKM
-    SKM --> SKM_KS
-    SKM --> SKM_ROUTER
-    SKM_KS --> KSP
+    KS_API --> KSP
     KSP --> KS2
     KS2 --> KM_HAL
     KM_HAL --> QTEE
     KM_HAL --> SE
 
-    style SKM fill:#c8e6c9
+    style KS_API fill:#c8e6c9
     style QTEE fill:#ffcdd2
     style SE fill:#ff8a80
 ```
 
-### 8.2 密钥路由策略
+### 7.2 Keystore使用最佳实践
+
+#### 7.2.1 密钥生成示例
+
+```java
+// 使用Android Keystore生成硬件保护的密钥
+KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(
+    KeyProperties.KEY_ALGORITHM_EC,
+    "AndroidKeyStore"
+);
+
+KeyGenParameterSpec spec = new KeyGenParameterSpec.Builder(
+    "vehicle_auth_key",
+    KeyProperties.PURPOSE_SIGN | KeyProperties.PURPOSE_VERIFY
+)
+    .setDigests(KeyProperties.DIGEST_SHA256)
+    .setUserAuthenticationRequired(true)
+    .setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
+    // 优先使用StrongBox(SE)，不可用时降级到TEE
+    .setIsStrongBoxBacked(true)
+    .setAttestationChallenge(serverChallenge)  // 启用密钥证明
+    .build();
+
+keyPairGenerator.initialize(spec);
+KeyPair keyPair = keyPairGenerator.generateKeyPair();
+
+// 获取证明证书链，发送给服务器验证
+Certificate[] certChain = keyStore.getCertificateChain("vehicle_auth_key");
+```
+
+#### 7.2.2 密钥安全级别选择
+
+```mermaid
+flowchart TD
+    START["需要存储密钥"] --> Q1{"安全要求?"}
+    
+    Q1 -->|最高| Q2{"设备支持StrongBox/SE?"}
+    Q2 -->|是| SE["使用setIsStrongBoxBacked(true)<br/>SE硬件保护"]
+    Q2 -->|否| TEE["使用QTEE硬件保护<br/>默认安全级别"]
+    
+    Q1 -->|高| TEE
+    
+    Q1 -->|中| Q3{"需要硬件保护?"}
+    Q3 -->|是| TEE
+    Q3 -->|否| SW["软件Keystore<br/>不推荐用于敏感数据"]
+    
+    style SE fill:#ff8a80
+    style TEE fill:#ffcdd2
+    style SW fill:#fff9c4
+```
+
+### 7.3 密钥路由策略
 
 ```mermaid
 graph TB
@@ -722,9 +759,9 @@ graph TB
 
 ---
 
-## 九、安全仲裁架构设计
+## 八、安全仲裁架构设计
 
-### 9.1 高通平台安全仲裁决策流程
+### 8.1 高通平台安全仲裁决策流程
 
 ```mermaid
 flowchart TD
@@ -753,7 +790,7 @@ flowchart TD
     style DENY fill:#ff5252
 ```
 
-### 9.2 双模块降级策略
+### 8.2 双模块降级策略
 
 ```mermaid
 stateDiagram-v2
@@ -792,9 +829,9 @@ stateDiagram-v2
 
 ---
 
-## 十、故障检测与降级策略
+## 九、故障检测与降级策略
 
-### 10.1 双模块健康监测
+### 9.1 双模块健康监测
 
 ```mermaid
 graph TB
@@ -834,9 +871,9 @@ graph TB
 
 ---
 
-## 十一、安全监控与审计增强
+## 十、安全监控与审计增强
 
-### 11.1 双模块安全日志架构
+### 10.1 双模块安全日志架构
 
 ```mermaid
 graph TB
@@ -868,9 +905,9 @@ graph TB
 
 ---
 
-## 十二、实施建议
+## 十一、实施建议
 
-### 12.1 高通平台实施优先级
+### 11.1 高通平台实施优先级
 
 ```mermaid
 gantt
@@ -890,7 +927,7 @@ gantt
     安全合规审计             :p3_2, after p2_2, 30d
 ```
 
-### 12.2 高通平台优势总结
+### 11.2 高通平台优势总结
 
 ```mermaid
 mindmap
